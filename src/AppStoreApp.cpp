@@ -62,12 +62,8 @@ static std::vector<std::string>   s_appIds;
 
 static lv_obj_t*   s_listContainer = nullptr;
 static lv_obj_t*   s_statusLabel   = nullptr;
-static lv_obj_t*   s_actionBar     = nullptr;
-static lv_obj_t*   s_actionLabel   = nullptr;
 static lv_obj_t*   s_refreshBtn    = nullptr;
 static lv_timer_t* s_pollTimer     = nullptr;
-static lv_group_t* s_appGroup      = nullptr;
-static int         s_focusedIdx    = -1;
 
 /* ── Helpers ─────────────────────────────────────────────────────────── */
 
@@ -370,52 +366,12 @@ static void show_detail(size_t idx) {
     }
 }
 
-/* ── Action bar update ──────────────────────────────────────────────── */
-
-static void update_action_bar() {
-    if (!s_actionLabel) return;
-
-    bool busy = (s_state == AppStoreState::Installing ||
-                 s_state == AppStoreState::Removing ||
-                 s_state == AppStoreState::Updating ||
-                 s_state == AppStoreState::Loading);
-    if (busy) {
-        lv_label_set_text(s_actionLabel, "Please wait...");
-        return;
-    }
-
-    if (s_focusedIdx < 0) {
-        lv_label_set_text(s_actionLabel, "Navigate with encoder");
-        return;
-    }
-
-    std::lock_guard<std::mutex> lock(s_dataMutex);
-    if ((size_t)s_focusedIdx >= s_apps.size()) return;
-    const auto& app = s_apps[s_focusedIdx];
-    bool compat = platform_matches(app.platforms);
-
-    if (app.installed) {
-        lv_label_set_text(s_actionLabel, "Press: Update | Remove");
-    } else if (compat) {
-        lv_label_set_text(s_actionLabel, "Press: Install");
-    } else {
-        lv_label_set_text(s_actionLabel, "Not compatible with PC");
-    }
-}
-
 /* ── UI building ────────────────────────────────────────────────────── */
 
 static void rebuild_list() {
     if (!s_listContainer) return;
 
     lv_obj_clean(s_listContainer);
-
-    // Create dedicated group for app tiles
-    if (s_appGroup) {
-        lv_group_delete(s_appGroup);
-    }
-    s_appGroup = lv_group_create();
-    s_focusedIdx = -1;
 
     std::lock_guard<std::mutex> lock(s_dataMutex);
 
@@ -517,43 +473,11 @@ static void rebuild_list() {
         lv_obj_set_style_text_color(platLabel,
             compat ? lv_color_hex(0x4488CC) : lv_color_hex(0x443333), 0);
 
-        // Add to group for encoder navigation
-        lv_group_add_obj(s_appGroup, tile);
-
-        // Focus callback — update action bar + track index
-        lv_obj_add_event_cb(tile, [](lv_event_t* e) {
-            int idx = (int)(intptr_t)lv_event_get_user_data(e);
-            s_focusedIdx = idx;
-            update_action_bar();
-            // Scroll to focused tile
-            lv_obj_t* obj = lv_event_get_target_obj(e);
-            lv_obj_scroll_to_view(obj, LV_ANIM_ON);
-        }, LV_EVENT_FOCUSED, (void*)(intptr_t)i);
-
-        // Click / press callback — open detail
+        // Click callback — open detail popup
         lv_obj_add_event_cb(tile, [](lv_event_t* e) {
             int idx = (int)(intptr_t)lv_event_get_user_data(e);
             show_detail((size_t)idx);
         }, LV_EVENT_CLICKED, (void*)(intptr_t)i);
-
-        // Also handle encoder ENTER (pressed)
-        lv_obj_add_event_cb(tile, [](lv_event_t* e) {
-            int idx = (int)(intptr_t)lv_event_get_user_data(e);
-            show_detail((size_t)idx);
-        }, LV_EVENT_PRESSED, (void*)(intptr_t)i);
-    }
-
-    // Set the app group as default so encoder navigates tiles
-    lv_indev_t* indev = nullptr;
-    while ((indev = lv_indev_get_next(indev)) != nullptr) {
-        if (lv_indev_get_type(indev) == LV_INDEV_TYPE_ENCODER) {
-            lv_indev_set_group(indev, s_appGroup);
-        }
-    }
-
-    // Focus first tile
-    if (!s_apps.empty()) {
-        lv_group_focus_next(s_appGroup);
     }
 }
 
@@ -579,8 +503,6 @@ static void poll_timer_cb(lv_timer_t*) {
         if (busy) lv_obj_add_state(s_refreshBtn, LV_STATE_DISABLED);
         else      lv_obj_remove_state(s_refreshBtn, LV_STATE_DISABLED);
     }
-
-    update_action_bar();
 }
 
 /* ── App create / destroy ───────────────────────────────────────────── */
@@ -638,21 +560,6 @@ lv_obj_t* AppStore_create(lv_obj_t* parent, App*) {
     lv_obj_add_flag(s_listContainer, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scrollbar_mode(s_listContainer, LV_SCROLLBAR_MODE_AUTO);
 
-    // ── Action bar (contextual hints) ──
-    s_actionBar = lv_obj_create(root);
-    lv_obj_set_size(s_actionBar, LV_PCT(100), 22);
-    lv_obj_set_style_bg_color(s_actionBar, lv_color_hex(0x16213E), 0);
-    lv_obj_set_style_border_width(s_actionBar, 0, 0);
-    lv_obj_set_style_pad_all(s_actionBar, 2, 0);
-    lv_obj_set_style_radius(s_actionBar, 0, 0);
-    lv_obj_remove_flag(s_actionBar, LV_OBJ_FLAG_SCROLLABLE);
-
-    s_actionLabel = lv_label_create(s_actionBar);
-    lv_label_set_text(s_actionLabel, "Navigate with encoder");
-    lv_obj_set_style_text_font(s_actionLabel, &lv_font_montserrat_10, 0);
-    lv_obj_set_style_text_color(s_actionLabel, lv_color_hex(0xAAAAAA), 0);
-    lv_obj_center(s_actionLabel);
-
     // ── Status bar ──
     lv_obj_t* statusBar = lv_obj_create(root);
     lv_obj_set_size(statusBar, LV_PCT(100), 18);
@@ -679,24 +586,9 @@ lv_obj_t* AppStore_create(lv_obj_t* parent, App*) {
 void AppStore_destroy(lv_obj_t* app_obj) {
     if (s_pollTimer) { lv_timer_delete(s_pollTimer); s_pollTimer = nullptr; }
 
-    // Restore default group for encoder
-    if (s_appGroup) {
-        lv_indev_t* indev = nullptr;
-        while ((indev = lv_indev_get_next(indev)) != nullptr) {
-            if (lv_indev_get_type(indev) == LV_INDEV_TYPE_ENCODER) {
-                lv_indev_set_group(indev, lv_group_get_default());
-            }
-        }
-        lv_group_delete(s_appGroup);
-        s_appGroup = nullptr;
-    }
-
     s_listContainer = nullptr;
     s_statusLabel = nullptr;
-    s_actionBar = nullptr;
-    s_actionLabel = nullptr;
     s_refreshBtn = nullptr;
-    s_focusedIdx = -1;
     s_dataReady = false;
 
     lv_obj_delete_async(app_obj);
