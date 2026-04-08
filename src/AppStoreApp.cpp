@@ -29,6 +29,9 @@
 #include <string>
 #include <thread>
 #include <vector>
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 
 /* ── Data ───────────────────────────────────────────────────────────── */
 
@@ -65,8 +68,10 @@ static lv_obj_t*   s_statusLabel   = nullptr;
 static lv_obj_t*   s_refreshBtn    = nullptr;
 static lv_obj_t*   s_buildBar      = nullptr;
 static lv_obj_t*   s_buildBtn      = nullptr;
+static lv_obj_t*   s_restartBtn    = nullptr;
 static lv_timer_t* s_pollTimer     = nullptr;
 static std::atomic<bool> s_pendingChanges{false};
+static std::atomic<bool> s_buildDone{false};
 
 /* ── Helpers ─────────────────────────────────────────────────────────── */
 
@@ -334,6 +339,7 @@ static void action_build() {
         int rc = pclose(pipe);
         if (rc == 0 && errors == 0) {
             s_pendingChanges = false;
+            s_buildDone = true;
             set_status("Build OK — restart to apply");
         } else {
             set_status("Build failed (" + std::to_string(errors) + " errors)");
@@ -561,10 +567,16 @@ static void poll_timer_cb(lv_timer_t*) {
         else      lv_obj_remove_state(s_refreshBtn, LV_STATE_DISABLED);
     }
 
-    // Show/hide build bar
+    // Show/hide build bar + restart button
     if (s_buildBar) {
-        if (s_pendingChanges && !busy) {
+        if (s_buildDone) {
             lv_obj_remove_flag(s_buildBar, LV_OBJ_FLAG_HIDDEN);
+            if (s_buildBtn) lv_obj_add_flag(s_buildBtn, LV_OBJ_FLAG_HIDDEN);
+            if (s_restartBtn) lv_obj_remove_flag(s_restartBtn, LV_OBJ_FLAG_HIDDEN);
+        } else if (s_pendingChanges && !busy) {
+            lv_obj_remove_flag(s_buildBar, LV_OBJ_FLAG_HIDDEN);
+            if (s_buildBtn) lv_obj_remove_flag(s_buildBtn, LV_OBJ_FLAG_HIDDEN);
+            if (s_restartBtn) lv_obj_add_flag(s_restartBtn, LV_OBJ_FLAG_HIDDEN);
         } else {
             lv_obj_add_flag(s_buildBar, LV_OBJ_FLAG_HIDDEN);
         }
@@ -655,6 +667,23 @@ lv_obj_t* AppStore_create(lv_obj_t* parent, App*) {
         action_build();
     }, LV_EVENT_CLICKED, nullptr);
 
+    s_restartBtn = lv_button_create(s_buildBar);
+    lv_obj_set_size(s_restartBtn, 65, 22);
+    lv_obj_align(s_restartBtn, LV_ALIGN_RIGHT_MID, -2, 0);
+    lv_obj_set_style_bg_color(s_restartBtn, lv_color_hex(0x227722), 0);
+    lv_obj_set_style_radius(s_restartBtn, 4, 0);
+    lv_obj_t* restartLabel = lv_label_create(s_restartBtn);
+    lv_label_set_text(restartLabel, "Restart");
+    lv_obj_set_style_text_font(restartLabel, &lv_font_montserrat_10, 0);
+    lv_obj_center(restartLabel);
+    lv_obj_add_flag(s_restartBtn, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_event_cb(s_restartBtn, [](lv_event_t*) {
+        // Re-exec the simulator binary
+        std::string exe = get_project_root() + "/bin/CrossPad";
+        printf("[AppStore] Restarting: %s\n", exe.c_str());
+        execl(exe.c_str(), "CrossPad", nullptr);
+    }, LV_EVENT_CLICKED, nullptr);
+
     // ── Status bar ──
     lv_obj_t* statusBar = lv_obj_create(root);
     lv_obj_set_size(statusBar, LV_PCT(100), 18);
@@ -686,8 +715,10 @@ void AppStore_destroy(lv_obj_t* app_obj) {
     s_refreshBtn = nullptr;
     s_buildBar = nullptr;
     s_buildBtn = nullptr;
+    s_restartBtn = nullptr;
     s_dataReady = false;
     s_pendingChanges = false;
+    s_buildDone = false;
 
     lv_obj_delete_async(app_obj);
     printf("[AppStore] Destroyed\n");
