@@ -63,7 +63,10 @@ static std::vector<std::string>   s_appIds;
 static lv_obj_t*   s_listContainer = nullptr;
 static lv_obj_t*   s_statusLabel   = nullptr;
 static lv_obj_t*   s_refreshBtn    = nullptr;
+static lv_obj_t*   s_buildBar      = nullptr;
+static lv_obj_t*   s_buildBtn      = nullptr;
 static lv_timer_t* s_pollTimer     = nullptr;
+static std::atomic<bool> s_pendingChanges{false};
 
 /* ── Helpers ─────────────────────────────────────────────────────────── */
 
@@ -258,8 +261,13 @@ static void action_install(const std::string& appId) {
     std::string id = appId;
     std::thread([id]() {
         bool ok = run_app_cmd("install", id.c_str());
-        set_status(ok ? "Installed — rebuild needed" : "Install failed");
-        if (!ok) s_state = AppStoreState::Error;
+        if (ok) {
+            s_pendingChanges = true;
+            set_status("Installed — rebuild needed");
+        } else {
+            set_status("Install failed");
+            s_state = AppStoreState::Error;
+        }
         load_data();
     }).detach();
 }
@@ -270,8 +278,13 @@ static void action_remove(const std::string& appId) {
     std::string id = appId;
     std::thread([id]() {
         bool ok = run_app_cmd("remove", id.c_str());
-        set_status(ok ? "Removed — rebuild needed" : "Remove failed");
-        if (!ok) s_state = AppStoreState::Error;
+        if (ok) {
+            s_pendingChanges = true;
+            set_status("Removed — rebuild needed");
+        } else {
+            set_status("Remove failed");
+            s_state = AppStoreState::Error;
+        }
         load_data();
     }).detach();
 }
@@ -282,9 +295,52 @@ static void action_update(const std::string& appId) {
     std::string id = appId;
     std::thread([id]() {
         bool ok = run_app_cmd("update", id.c_str());
-        set_status(ok ? "Updated" : "Update failed");
-        if (!ok) s_state = AppStoreState::Error;
+        if (ok) {
+            s_pendingChanges = true;
+            set_status("Updated — rebuild needed");
+        } else {
+            set_status("Update failed");
+            s_state = AppStoreState::Error;
+        }
         load_data();
+    }).detach();
+}
+
+static void action_build() {
+    s_state = AppStoreState::Installing; // reuse for "busy"
+    set_status("Building...");
+    std::thread([]() {
+        std::string root = get_project_root();
+        char cmd[512];
+        snprintf(cmd, sizeof(cmd),
+                 "cd \"%s\" && cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug"
+                 " && cmake --build build 2>&1",
+                 root.c_str());
+
+        FILE* pipe = popen(cmd, "r");
+        if (!pipe) { set_status("Build failed — no cmake"); s_state = AppStoreState::Error; return; }
+
+        char buf[256];
+        int errors = 0;
+        while (fgets(buf, sizeof(buf), pipe)) {
+            std::string line(buf);
+            if (!line.empty() && line.back() == '\n') line.pop_back();
+            // Show ninja progress lines [N/M]
+            if (!line.empty() && line[0] == '[') {
+                set_status(line.substr(0, 40));
+            }
+            if (line.find("error:") != std::string::npos) errors++;
+        }
+        int rc = pclose(pipe);
+        if (rc == 0 && errors == 0) {
+            s_pendingChanges = false;
+            set_status("Build OK — restart to apply");
+        } else {
+            set_status("Build failed (" + std::to_string(errors) + " errors)");
+            s_state = AppStoreState::Error;
+            return;
+        }
+        s_state = AppStoreState::Idle;
     }).detach();
 }
 
@@ -495,13 +551,23 @@ static void poll_timer_cb(lv_timer_t*) {
         rebuild_list();
     }
 
+    bool busy = (s_state == AppStoreState::Loading ||
+                 s_state == AppStoreState::Installing ||
+                 s_state == AppStoreState::Removing ||
+                 s_state == AppStoreState::Updating);
+
     if (s_refreshBtn) {
-        bool busy = (s_state == AppStoreState::Loading ||
-                     s_state == AppStoreState::Installing ||
-                     s_state == AppStoreState::Removing ||
-                     s_state == AppStoreState::Updating);
         if (busy) lv_obj_add_state(s_refreshBtn, LV_STATE_DISABLED);
         else      lv_obj_remove_state(s_refreshBtn, LV_STATE_DISABLED);
+    }
+
+    // Show/hide build bar
+    if (s_buildBar) {
+        if (s_pendingChanges && !busy) {
+            lv_obj_remove_flag(s_buildBar, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(s_buildBar, LV_OBJ_FLAG_HIDDEN);
+        }
     }
 }
 
@@ -560,6 +626,35 @@ lv_obj_t* AppStore_create(lv_obj_t* parent, App*) {
     lv_obj_add_flag(s_listContainer, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scrollbar_mode(s_listContainer, LV_SCROLLBAR_MODE_AUTO);
 
+    // ── Build bar (hidden until pending changes) ──
+    s_buildBar = lv_obj_create(root);
+    lv_obj_set_size(s_buildBar, LV_PCT(100), 28);
+    lv_obj_set_style_bg_color(s_buildBar, lv_color_hex(0x2D1F0E), 0);
+    lv_obj_set_style_border_width(s_buildBar, 0, 0);
+    lv_obj_set_style_pad_all(s_buildBar, 3, 0);
+    lv_obj_set_style_radius(s_buildBar, 0, 0);
+    lv_obj_remove_flag(s_buildBar, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(s_buildBar, LV_OBJ_FLAG_HIDDEN);
+
+    lv_obj_t* pendingLabel = lv_label_create(s_buildBar);
+    lv_label_set_text(pendingLabel, LV_SYMBOL_WARNING " Rebuild needed");
+    lv_obj_set_style_text_font(pendingLabel, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_color(pendingLabel, lv_color_hex(0xFFAA33), 0);
+    lv_obj_align(pendingLabel, LV_ALIGN_LEFT_MID, 4, 0);
+
+    s_buildBtn = lv_button_create(s_buildBar);
+    lv_obj_set_size(s_buildBtn, 60, 22);
+    lv_obj_align(s_buildBtn, LV_ALIGN_RIGHT_MID, -2, 0);
+    lv_obj_set_style_bg_color(s_buildBtn, lv_color_hex(0xCC6600), 0);
+    lv_obj_set_style_radius(s_buildBtn, 4, 0);
+    lv_obj_t* buildLabel = lv_label_create(s_buildBtn);
+    lv_label_set_text(buildLabel, "Build");
+    lv_obj_set_style_text_font(buildLabel, &lv_font_montserrat_10, 0);
+    lv_obj_center(buildLabel);
+    lv_obj_add_event_cb(s_buildBtn, [](lv_event_t*) {
+        action_build();
+    }, LV_EVENT_CLICKED, nullptr);
+
     // ── Status bar ──
     lv_obj_t* statusBar = lv_obj_create(root);
     lv_obj_set_size(statusBar, LV_PCT(100), 18);
@@ -589,7 +684,10 @@ void AppStore_destroy(lv_obj_t* app_obj) {
     s_listContainer = nullptr;
     s_statusLabel = nullptr;
     s_refreshBtn = nullptr;
+    s_buildBar = nullptr;
+    s_buildBtn = nullptr;
     s_dataReady = false;
+    s_pendingChanges = false;
 
     lv_obj_delete_async(app_obj);
     printf("[AppStore] Destroyed\n");
