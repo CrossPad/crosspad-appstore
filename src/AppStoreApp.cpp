@@ -29,7 +29,12 @@
 #include <string>
 #include <thread>
 #include <vector>
-#ifndef _WIN32
+
+#ifdef _WIN32
+#include <process.h>
+#define popen  _popen
+#define pclose _pclose
+#else
 #include <unistd.h>
 #endif
 
@@ -681,7 +686,11 @@ lv_obj_t* AppStore_create(lv_obj_t* parent, App*) {
         // Re-exec the simulator binary
         std::string exe = get_project_root() + "/bin/CrossPad";
         printf("[AppStore] Restarting: %s\n", exe.c_str());
+#ifdef _WIN32
+        _execl(exe.c_str(), "CrossPad", nullptr);
+#else
         execl(exe.c_str(), "CrossPad", nullptr);
+#endif
     }, LV_EVENT_CLICKED, nullptr);
 
     // ── Status bar ──
