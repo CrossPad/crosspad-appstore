@@ -212,6 +212,11 @@ static void load_data() {
         }
     }
 
+    // Remove self from the list
+    apps.erase(std::remove_if(apps.begin(), apps.end(),
+        [](const AppInfo& a) { return a.id == "appstore"; }),
+        apps.end());
+
     // Sort: compatible first, then by category, then by name
     std::sort(apps.begin(), apps.end(), [](const AppInfo& a, const AppInfo& b) {
         bool aCompat = platform_matches(a.platforms);
