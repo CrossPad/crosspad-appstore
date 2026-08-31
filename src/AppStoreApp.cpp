@@ -13,7 +13,8 @@
 #include "pc_stubs/PcApp.hpp"
 #include "pc_stubs/pc_platform.h"
 
-#include <crosspad/app/AppRegistry.hpp>
+#include <crosspad/app/AppRegistrar.hpp>
+#include "crosspad-gui/components/app_icon.h"
 #include "crosspad-gui/platform/IGuiPlatform.h"
 
 #include "lvgl.h"
@@ -740,17 +741,8 @@ void AppStore_destroy(lv_obj_t* app_obj) {
 
 /* ── Registration ───────────────────────────────────────────────────── */
 
-void _register_AppStore_app() {
-    static char icon_path[256];
-    snprintf(icon_path, sizeof(icon_path), "%sCrossPad_Logo_110w.png",
-             crosspad_gui::getGuiPlatform().assetPathPrefix());
-
-    static const crosspad::AppEntry entry = {
-        "App Store", icon_path,
-        AppStore_create, AppStore_destroy,
-        5
-    };
-    crosspad::AppRegistry::getInstance().registerApp(entry);
-}
+REGISTER_APP(AppStore, nullptr, crosspad_gui::resolveAppIcon("CrossPad_Logo_110w.png"),
+             AppStore_create, AppStore_destroy,
+             nullptr, nullptr, nullptr, 5)
 
 #endif // USE_LVGL
