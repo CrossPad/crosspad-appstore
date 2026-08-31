@@ -748,7 +748,7 @@ void _register_AppStore_app() {
     static const crosspad::AppEntry entry = {
         "App Store", icon_path,
         AppStore_create, AppStore_destroy,
-        nullptr, nullptr, nullptr, nullptr, 5
+        5
     };
     crosspad::AppRegistry::getInstance().registerApp(entry);
 }
