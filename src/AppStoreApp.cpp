@@ -735,7 +735,7 @@ void AppStore_destroy(lv_obj_t* app_obj) {
     s_pendingChanges = false;
     s_buildDone = false;
 
-    lv_obj_delete_async(app_obj);
+    if (app_obj) lv_obj_delete_async(app_obj);
     printf("[AppStore] Destroyed\n");
 }
 
