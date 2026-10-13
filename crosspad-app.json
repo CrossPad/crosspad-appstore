@@ -1,7 +1,7 @@
 {
   "name": "App Store",
   "id": "appstore",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Browse, install, and manage CrossPad apps from the registry",
   "category": "tools",
   "icon": "CrossPad_Logo_110w.png",
@@ -9,10 +9,11 @@
   "platforms": ["pc"],
   "built_in": true,
   "requires": {
-    "crosspad-core": ">=0.3.0",
-    "crosspad-gui": ">=0.2.0"
+    "crosspad-core": "^2.0.0",
+    "crosspad-gui": "^2.0.0"
   },
   "changelog": [
+    "0.1.1: a root deleted before the app's teardown is handled (gui 2.0 calls destroy with none); requires core 2.0 and gui 2.0",
     "0.1.0: Initial release — registry browser, install/remove/update via app manager"
   ]
 }
