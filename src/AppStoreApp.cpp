@@ -16,6 +16,7 @@
 #include <crosspad/app/AppRegistrar.hpp>
 #include "crosspad-gui/components/app_icon.h"
 #include "crosspad-gui/platform/IGuiPlatform.h"
+#include "crosspad-gui/theme/crosspad_theme.h"
 
 #include "lvgl.h"
 #include <ArduinoJson.h>
@@ -394,6 +395,9 @@ static void show_detail(size_t idx) {
     }
 
     lv_obj_t* mbox = lv_msgbox_create(nullptr);
+    // The modal backdrop goes on lv_layer_top(), which in the simulator is the
+    // whole device window: move it to the layer over the LCD.
+    lv_obj_set_parent(lv_obj_get_parent(mbox), crosspad_gui::getOverlayParent());
     lv_msgbox_add_title(mbox, app.name.c_str());
     lv_obj_t* txtObj = lv_msgbox_add_text(mbox, desc.c_str());
     lv_obj_set_style_text_color(txtObj, lv_color_hex(0xCCCCCC), 0);
@@ -401,6 +405,7 @@ static void show_detail(size_t idx) {
     lv_msgbox_add_close_button(mbox);
 
     lv_obj_set_width(mbox, 290);
+    lv_obj_set_style_max_height(mbox, LV_PCT(95), 0);   // a long description scrolls inside
     lv_obj_center(mbox);
     lv_obj_set_style_bg_color(mbox, lv_color_hex(0x16213E), 0);
 
